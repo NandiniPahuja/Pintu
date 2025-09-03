@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
+import * as storage from './storage'
+import { Project as StorageProject } from './storage'
 
 // Types
 export interface User {
@@ -15,7 +17,15 @@ export interface Project {
   description?: string
   createdAt: Date
   updatedAt: Date
+  thumbnail?: string
   canvasData?: string
+  metadata?: {
+    width: number;
+    height: number;
+    aspectRatio?: string;
+    tags?: string[];
+    [key: string]: any;
+  }
 }
 
 export interface AppState {
@@ -32,6 +42,8 @@ export interface AppState {
   // Project state
   currentProject: Project | null
   projects: Project[]
+  lastSaved: number | null
+  lastAutosaved: number | null
   
   // Canvas state
   canvasHistory: string[]
@@ -56,8 +68,15 @@ export interface AppActions {
   setCurrentProject: (project: Project | null) => void
   addProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt'>) => void
   updateProject: (id: string, updates: Partial<Project>) => void
-  deleteProject: (id: string) => void
+  deleteProject: (id: string) => Promise<boolean>
   loadProjects: () => Promise<void>
+  
+  // Local storage project actions
+  saveProjectToStorage: (canvas: fabric.Canvas, name: string, id?: string) => Promise<string | null>
+  loadProjectFromStorage: (id: string) => Promise<Project | null>
+  saveCurrentProjectToStorage: (canvas: fabric.Canvas) => Promise<string | null>
+  autosaveProject: (canvas: fabric.Canvas) => Promise<void>
+  updateThumbnail: (canvas: fabric.Canvas) => Promise<void>
   
   // Canvas actions
   saveCanvasState: (canvasData: string) => void
@@ -78,6 +97,8 @@ const initialState: AppState = {
   sidebarOpen: true,
   currentProject: null,
   projects: [],
+  lastSaved: null,
+  lastAutosaved: null,
   canvasHistory: [],
   canvasHistoryIndex: -1,
   isCanvasModified: false,
@@ -160,27 +181,174 @@ export const useStore = create<Store>()(
           }))
         },
         
-        deleteProject: (id) => {
-          set((state) => ({
-            projects: state.projects.filter(p => p.id !== id),
-            currentProject: state.currentProject?.id === id ? null : state.currentProject,
-          }))
+        deleteProject: async (id) => {
+          // Delete from IndexedDB first
+          const success = await storage.deleteProject(id);
+          
+          // Update state if successful
+          if (success) {
+            set((state) => ({
+              projects: state.projects.filter(p => p.id !== id),
+              currentProject: state.currentProject?.id === id ? null : state.currentProject,
+            }));
+          }
+          
+          return success;
         },
         
         loadProjects: async () => {
           set({ isLoading: true, error: null })
           try {
-            // This would integrate with your API
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/projects`)
-            if (!response.ok) throw new Error('Failed to load projects')
+            // Load projects from IndexedDB
+            const projectPreviews = await storage.getProjectList();
             
-            const projects = await response.json()
+            // Convert to app project format
+            const projects = projectPreviews.map(preview => ({
+              id: preview.id,
+              name: preview.name,
+              description: "",
+              createdAt: new Date(preview.createdAt),
+              updatedAt: new Date(preview.updatedAt),
+              thumbnail: preview.thumbnail,
+              metadata: preview.metadata
+            }));
+            
             set({ projects, isLoading: false })
           } catch (error) {
             set({ 
               error: error instanceof Error ? error.message : 'Failed to load projects',
               isLoading: false 
             })
+          }
+        },
+        
+        // Local storage project actions
+        saveProjectToStorage: async (canvas, name, id) => {
+          try {
+            // Generate thumbnail
+            const thumbnail = await storage.generateThumbnail(canvas);
+            
+            // Create project from canvas
+            const storageProject = storage.createProjectFromCanvas(canvas, name, id);
+            storageProject.thumbnail = thumbnail;
+            
+            // Save to storage
+            const projectId = await storage.saveProject(storageProject);
+            
+            // Update current project in state
+            const project: Project = {
+              id: projectId,
+              name: storageProject.name,
+              createdAt: new Date(storageProject.createdAt),
+              updatedAt: new Date(storageProject.updatedAt),
+              thumbnail: storageProject.thumbnail,
+              metadata: storageProject.metadata
+            };
+            
+            set((state) => ({
+              currentProject: project,
+              projects: [...state.projects.filter(p => p.id !== projectId), project],
+              isCanvasModified: false,
+              lastSaved: Date.now()
+            }));
+            
+            return projectId;
+          } catch (error) {
+            console.error('Failed to save project:', error);
+            set({ error: 'Failed to save project' });
+            return null;
+          }
+        },
+        
+        loadProjectFromStorage: async (id) => {
+          try {
+            set({ isLoading: true, error: null });
+            
+            // Load from storage
+            const storageProject = await storage.loadProject(id);
+            if (!storageProject) {
+              throw new Error(`Project not found: ${id}`);
+            }
+            
+            // Convert to app project format
+            const project: Project = {
+              id: storageProject.id,
+              name: storageProject.name,
+              createdAt: new Date(storageProject.createdAt),
+              updatedAt: new Date(storageProject.updatedAt),
+              thumbnail: storageProject.thumbnail,
+              canvasData: storageProject.fabricJSON,
+              metadata: storageProject.metadata
+            };
+            
+            // Update state
+            set({
+              currentProject: project,
+              isLoading: false,
+              isCanvasModified: false,
+              canvasHistory: [storageProject.fabricJSON],
+              canvasHistoryIndex: 0
+            });
+            
+            return project;
+          } catch (error) {
+            console.error('Failed to load project:', error);
+            set({
+              isLoading: false,
+              error: error instanceof Error ? error.message : 'Failed to load project'
+            });
+            return null;
+          }
+        },
+        
+        saveCurrentProjectToStorage: async (canvas) => {
+          const state = get();
+          const currentProject = state.currentProject;
+          
+          if (!currentProject) {
+            set({ error: 'No active project to save' });
+            return null;
+          }
+          
+          return await get().saveProjectToStorage(canvas, currentProject.name, currentProject.id);
+        },
+        
+        autosaveProject: async (canvas) => {
+          try {
+            // Generate project from canvas
+            const currentProject = get().currentProject;
+            const name = currentProject?.name || 'Untitled Project';
+            
+            const storageProject = storage.createProjectFromCanvas(canvas, name, currentProject?.id);
+            
+            // Save to autosave storage
+            await storage.saveAutosave(storageProject);
+            
+            // Update state
+            set({ lastAutosaved: Date.now() });
+          } catch (error) {
+            console.error('Autosave failed:', error);
+          }
+        },
+        
+        updateThumbnail: async (canvas) => {
+          try {
+            const currentProject = get().currentProject;
+            if (!currentProject) return;
+            
+            // Generate thumbnail
+            const thumbnail = await storage.generateThumbnail(canvas);
+            
+            // Update project
+            const updates = { thumbnail };
+            get().updateProject(currentProject.id, updates);
+            
+            // Save to storage if needed
+            if (!get().isCanvasModified) {
+              await get().saveCurrentProjectToStorage(canvas);
+            }
+          } catch (error) {
+            console.error('Failed to update thumbnail:', error);
           }
         },
         

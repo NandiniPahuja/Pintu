@@ -35,10 +35,7 @@ export interface RequestConfig {
   timeout?: number
 }
 
-// Helper to get auth token (if stored in localStorage)
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('auth-token')
-}
+// Authentication now uses HTTP-only cookies, no token needed
 
 // Base fetch wrapper with error handling
 export const apiRequest = async <T = any>(
@@ -60,11 +57,9 @@ export const apiRequest = async <T = any>(
     ...headers,
   }
 
-  // Add auth token if available
-  const token = getAuthToken()
-  if (token) {
-    defaultHeaders.Authorization = `Bearer ${token}`
-  }
+  // We're using HTTP-only cookies for authentication, 
+  // so we need to include credentials in the request
+  const credentials: RequestCredentials = 'include';
 
   // Prepare request options
   const requestOptions: RequestInit = {
@@ -83,6 +78,9 @@ export const apiRequest = async <T = any>(
     }
   }
 
+  // Add credentials to include cookies
+  requestOptions.credentials = 'include'
+  
   // Create abort controller for timeout
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeout)
@@ -149,22 +147,19 @@ export const api = {
     apiRequest<T>(endpoint, { method: 'DELETE', headers }),
 }
 
-// Specific API endpoints
+// Specific API endpoints for username-only auth
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }),
+  login: (username: string) =>
+    api.post('/auth/login', { username }),
 
-  register: (name: string, email: string, password: string) =>
-    api.post('/auth/register', { name, email, password }),
+  register: (username: string) =>
+    api.post('/auth/register', { username }),
 
   logout: () =>
     api.post('/auth/logout'),
 
-  profile: () =>
-    api.get('/auth/profile'),
-
-  refreshToken: () =>
-    api.post('/auth/refresh'),
+  me: () =>
+    api.get('/auth/me'),
 }
 
 // Font detection API
@@ -231,7 +226,7 @@ export const elementsApi = {
 }
 
 export const filesApi = {
-  upload: (file: File, onProgress?: (progress: number) => void) => {
+  upload: (file: File) => {
     const formData = new FormData()
     formData.append('file', file)
     
@@ -266,9 +261,5 @@ export const handleApiError = (error: unknown): string => {
   return 'An unexpected error occurred'
 }
 
-// Storage helpers for auth tokens
-export const tokenStorage = {
-  set: (token: string) => localStorage.setItem('auth-token', token),
-  get: () => localStorage.getItem('auth-token'),
-  remove: () => localStorage.removeItem('auth-token'),
-}
+// We're using HTTP-only cookies for authentication now, 
+// so we don't need to manage tokens in localStorage
