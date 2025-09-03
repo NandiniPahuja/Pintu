@@ -17,6 +17,7 @@ interface DesignCanvasContextType {
   canvasRef: React.RefObject<HTMLCanvasElement>
   // Core functions
   addImageFromURL: (url: string, options?: fabric.IImageOptions) => Promise<fabric.Image | undefined>
+  addImage: (url: string, options?: fabric.IImageOptions) => Promise<fabric.Image | undefined> // Alias for addImageFromURL
   replaceImageLayer: (imageObj: fabric.Image, newUrl: string) => Promise<void>
   addText: (text: string, options?: fabric.ITextOptions) => void
   deleteSelected: () => void
@@ -609,6 +610,7 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
     canvasRef,
     // Core functions
     addImageFromURL,
+    addImage: addImageFromURL, // Alias for addImageFromURL
     replaceImageLayer,
     addText,
     deleteSelected,

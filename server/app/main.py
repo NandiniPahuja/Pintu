@@ -1,12 +1,28 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 import io
+import os
 import logging
+import uuid
+import shutil
+from typing import List, Optional
 from PIL import Image
 import uvicorn
 import cv2
 import numpy as np
+
+# Import database
+try:
+    from .database import get_session, create_db_and_tables, ELEMENTS_DIR
+    from .models import Element
+    from sqlmodel import Session, select
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Database modules not available - elements library will not work")
 
 # Import rembg (will be available when package is installed)
 try:
@@ -628,6 +644,252 @@ async def font_detection_endpoint(file: UploadFile = File(...)):
             }
         )
 
+@app.post("/elements", status_code=status.HTTP_201_CREATED)
+async def create_element(
+    name: str = Query(..., description="Element name"),
+    tags: str = Query(None, description="Comma-separated tags"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_session)
+):
+    """
+    Create a new element
+    
+    Args:
+        name: Element name
+        tags: Comma-separated tags (optional)
+        file: PNG image file
+        
+    Returns:
+        Created element details
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elements library is not available"
+        )
+
+    # Validate file
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an image"
+        )
+
+    try:
+        # Read uploaded file
+        contents = await file.read()
+        
+        # Validate file
+        try:
+            image = Image.open(io.BytesIO(contents))
+            image.verify()  # Verify it's a valid image
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid image file: {str(e)}"
+            )
+            
+        # Generate unique filename
+        element_id = str(uuid.uuid4())
+        file_extension = "png"
+        filename = f"{element_id}.{file_extension}"
+        file_path = os.path.join(ELEMENTS_DIR, filename)
+        
+        # Save file to disk
+        with open(file_path, "wb") as f:
+            # Reset file pointer and copy
+            f.write(contents)
+        
+        # Create database entry
+        element = Element(
+            id=element_id,
+            name=name,
+            tags=tags if tags else "",
+            file_path=filename
+        )
+        
+        db.add(element)
+        db.commit()
+        db.refresh(element)
+        
+        return element.to_dict()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating element: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating element: {str(e)}"
+        )
+
+@app.get("/elements")
+async def get_elements(
+    search: str = Query(None, description="Search term for name and tags"),
+    db: Session = Depends(get_session)
+):
+    """
+    Get all elements, optionally filtered by search term
+    
+    Args:
+        search: Search term for name and tags (optional)
+        
+    Returns:
+        List of elements
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elements library is not available"
+        )
+    
+    try:
+        query = select(Element).order_by(Element.created_at.desc())
+        
+        # Apply search filter if provided
+        if search:
+            query = query.where(
+                (Element.name.contains(search)) | (Element.tags.contains(search))
+            )
+            
+        elements = db.exec(query).all()
+        return [element.to_dict() for element in elements]
+    
+    except Exception as e:
+        logger.error(f"Error getting elements: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting elements: {str(e)}"
+        )
+
+@app.get("/elements/{element_id}")
+async def get_element(element_id: str, db: Session = Depends(get_session)):
+    """
+    Get element details by ID
+    
+    Args:
+        element_id: Element ID
+        
+    Returns:
+        Element details
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elements library is not available"
+        )
+        
+    try:
+        element = db.get(Element, element_id)
+        if not element:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Element with ID {element_id} not found"
+            )
+            
+        return element.to_dict()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting element: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting element: {str(e)}"
+        )
+
+@app.get("/elements/{element_id}/file")
+async def get_element_file(element_id: str, db: Session = Depends(get_session)):
+    """
+    Get element file by ID
+    
+    Args:
+        element_id: Element ID
+        
+    Returns:
+        Element PNG file
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elements library is not available"
+        )
+        
+    try:
+        element = db.get(Element, element_id)
+        if not element:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Element with ID {element_id} not found"
+            )
+            
+        file_path = os.path.join(ELEMENTS_DIR, element.file_path)
+        if not os.path.exists(file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Element file not found"
+            )
+            
+        return FileResponse(
+            file_path, 
+            media_type="image/png",
+            filename=f"{element.name}.png"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting element file: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting element file: {str(e)}"
+        )
+
+@app.delete("/elements/{element_id}")
+async def delete_element(element_id: str, db: Session = Depends(get_session)):
+    """
+    Delete element by ID
+    
+    Args:
+        element_id: Element ID
+        
+    Returns:
+        Success message
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elements library is not available"
+        )
+        
+    try:
+        element = db.get(Element, element_id)
+        if not element:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Element with ID {element_id} not found"
+            )
+            
+        # Delete file if it exists
+        file_path = os.path.join(ELEMENTS_DIR, element.file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        # Delete database entry
+        db.delete(element)
+        db.commit()
+        
+        return {"message": f"Element {element_id} deleted successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting element: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting element: {str(e)}"
+        )
+
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
@@ -638,9 +900,23 @@ async def root():
             "health": "/health",
             "remove_background": "/remove-bg (POST)",
             "segment_image": "/segment (POST)",
-            "font_detection": "/font-detect (POST)"
+            "font_detection": "/font-detect (POST)",
+            "elements": "/elements (GET, POST)",
+            "element_detail": "/elements/{element_id} (GET, DELETE)",
+            "element_file": "/elements/{element_id}/file (GET)"
         }
     }
+
+# Initialize database on startup
+@app.on_event("startup")
+async def on_startup():
+    """Initialize database on startup"""
+    if DB_AVAILABLE:
+        try:
+            create_db_and_tables()
+            logger.info("Database initialized")
+        except Exception as e:
+            logger.error(f"Error initializing database: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     uvicorn.run(

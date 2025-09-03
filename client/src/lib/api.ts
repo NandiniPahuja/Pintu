@@ -167,6 +167,23 @@ export const authApi = {
     api.post('/auth/refresh'),
 }
 
+// Font detection API
+export interface FontDetectionResult {
+  success: boolean;
+  category: string;
+  suggestions: string[];
+  confidence: number;
+  fallback?: boolean;
+}
+
+export const fontApi = {
+  detectFont: (file: File): Promise<FontDetectionResult> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<FontDetectionResult>('/font-detect', formData);
+  }
+}
+
 export const projectsApi = {
   getAll: () =>
     api.get('/projects'),
@@ -185,6 +202,32 @@ export const projectsApi = {
 
   saveCanvas: (id: string, canvasData: string) =>
     api.patch(`/projects/${id}/canvas`, { canvasData }),
+}
+
+// Element types
+export interface Element {
+  id: string;
+  name: string;
+  tags: string[];
+  file_path: string;
+  created_at: string;
+}
+
+export const elementsApi = {
+  getAll: (search?: string) =>
+    api.get<Element[]>('/elements' + (search ? `?search=${encodeURIComponent(search)}` : '')),
+    
+  getById: (id: string) =>
+    api.get<Element>(`/elements/${id}`),
+    
+  create: (data: FormData) =>
+    api.post<Element>('/elements', data),
+    
+  delete: (id: string) =>
+    api.delete(`/elements/${id}`),
+    
+  getElementFileUrl: (id: string) =>
+    `${API_BASE_URL}/elements/${id}/file`,
 }
 
 export const filesApi = {

@@ -1,115 +1,110 @@
-import React, { useState } from 'react'
-
-interface Element {
-  id: string
-  name: string
-  type: 'text' | 'shape' | 'image' | 'icon'
-  thumbnail: string
-  createdAt: Date
-  tags: string[]
-  category: string
-}
-
-const mockElements: Element[] = [
-  {
-    id: '1',
-    name: 'Gradient Button',
-    type: 'shape',
-    thumbnail: '🔘',
-    createdAt: new Date('2024-01-15'),
-    tags: ['button', 'gradient', 'ui'],
-    category: 'UI Elements'
-  },
-  {
-    id: '2',
-    name: 'Logo Text',
-    type: 'text',
-    thumbnail: '📝',
-    createdAt: new Date('2024-01-14'),
-    tags: ['logo', 'text', 'branding'],
-    category: 'Typography'
-  },
-  {
-    id: '3',
-    name: 'Arrow Shape',
-    type: 'shape',
-    thumbnail: '➡️',
-    createdAt: new Date('2024-01-13'),
-    tags: ['arrow', 'direction', 'pointer'],
-    category: 'Shapes'
-  },
-  {
-    id: '4',
-    name: 'Star Icon',
-    type: 'icon',
-    thumbnail: '⭐',
-    createdAt: new Date('2024-01-12'),
-    tags: ['star', 'rating', 'favorite'],
-    category: 'Icons'
-  },
-  {
-    id: '5',
-    name: 'Profile Card',
-    type: 'shape',
-    thumbnail: '👤',
-    createdAt: new Date('2024-01-11'),
-    tags: ['card', 'profile', 'user'],
-    category: 'UI Elements'
-  },
-  {
-    id: '6',
-    name: 'Heading Text',
-    type: 'text',
-    thumbnail: '📰',
-    createdAt: new Date('2024-01-10'),
-    tags: ['heading', 'title', 'text'],
-    category: 'Typography'
-  }
-]
-
-const categories = [
-  'All',
-  'UI Elements',
-  'Typography',
-  'Shapes',
-  'Icons',
-  'Images'
-]
+import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Element as ElementType, elementsApi, handleApiError } from '../lib/api'
+import { useDesignCanvas } from '../components/DesignCanvas'
 
 const Library: React.FC = () => {
-  const [selectedCategory, setSelectedCategory] = useState('All')
+  const [elements, setElements] = useState<ElementType[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
-  const [sortBy, setSortBy] = useState<'name' | 'date' | 'type'>('date')
-
-  const filteredElements = mockElements
-    .filter(element => {
-      const matchesCategory = selectedCategory === 'All' || element.category === selectedCategory
-      const matchesSearch = element.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           element.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
-      return matchesCategory && matchesSearch
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'name':
-          return a.name.localeCompare(b.name)
-        case 'date':
-          return b.createdAt.getTime() - a.createdAt.getTime()
-        case 'type':
-          return a.type.localeCompare(b.type)
-        default:
-          return 0
+  const [sortBy, setSortBy] = useState<'name' | 'date'>('date')
+  
+  const [draggedElement, setDraggedElement] = useState<ElementType | null>(null)
+  
+  const navigate = useNavigate()
+  const { addImage } = useDesignCanvas()
+  
+  // Fetch elements
+  useEffect(() => {
+    const fetchElements = async () => {
+      try {
+        setIsLoading(true)
+        const data = await elementsApi.getAll(searchQuery)
+        setElements(data)
+        setError(null)
+      } catch (err) {
+        setError(`Error loading elements: ${handleApiError(err)}`)
+        console.error('Failed to load elements:', err)
+      } finally {
+        setIsLoading(false)
       }
-    })
+    }
+    
+    fetchElements()
+    
+    // Set up a timer to refresh periodically
+    const timer = setTimeout(fetchElements, 30000) // Refresh every 30 seconds
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+  
+  // Sort elements
+  const sortedElements = [...elements].sort((a, b) => {
+    switch (sortBy) {
+      case 'name':
+        return a.name.localeCompare(b.name)
+      case 'date':
+      default:
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    }
+  })
 
-  const handleElementClick = (element: Element) => {
-    // TODO: Add element to canvas or open preview
-    console.log('Selected element:', element)
+  // Element click handler
+  const handleElementClick = async (element: ElementType) => {
+    try {
+      // Add element to canvas
+      const imageUrl = elementsApi.getElementFileUrl(element.id)
+      await addImage(imageUrl, { name: element.name })
+      
+      // Navigate to editor
+      navigate('/editor')
+    } catch (err) {
+      console.error('Failed to add element to canvas:', err)
+      alert('Failed to add element to canvas. Please try again.')
+    }
   }
-
-  const handleElementDelete = (elementId: string) => {
-    // TODO: Delete element from library
-    console.log('Delete element:', elementId)
+  
+  // Element drag handlers
+  const handleElementDragStart = (element: ElementType, e: React.DragEvent) => {
+    setDraggedElement(element)
+    
+    // Set drag image data
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      type: 'element',
+      id: element.id,
+      name: element.name
+    }))
+    
+    // Set drag preview (optional)
+    if (e.dataTransfer.setDragImage) {
+      const preview = document.createElement('div')
+      preview.className = 'drag-preview'
+      preview.textContent = element.name
+      preview.style.cssText = 'position:absolute; top:-9999px; left:-9999px; padding:10px; background:white; border:1px solid #ddd; border-radius:4px;'
+      document.body.appendChild(preview)
+      e.dataTransfer.setDragImage(preview, 0, 0)
+      setTimeout(() => {
+        document.body.removeChild(preview)
+      }, 0)
+    }
+  }
+  
+  // Element delete handler
+  const handleElementDelete = async (elementId: string) => {
+    if (!confirm('Are you sure you want to delete this element?')) return
+    
+    try {
+      await elementsApi.delete(elementId)
+      
+      // Update local state
+      setElements(elements.filter(element => element.id !== elementId))
+      
+    } catch (err) {
+      console.error('Failed to delete element:', err)
+      alert(`Failed to delete element: ${handleApiError(err)}`)
+    }
   }
 
   return (
@@ -118,14 +113,17 @@ const Library: React.FC = () => {
       <div className="bg-white border-b border-secondary-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-secondary-900">My Elements</h1>
-            <p className="text-secondary-600">Your saved design elements and components</p>
+            <h1 className="text-2xl font-bold text-secondary-900">Element Library</h1>
+            <p className="text-secondary-600">Reusable design elements you've saved</p>
           </div>
-          <button className="btn-primary flex items-center space-x-2">
+          <button 
+            onClick={() => navigate('/editor')}
+            className="btn-primary flex items-center space-x-2"
+          >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
             </svg>
-            <span>Save Current</span>
+            <span>Go to Editor</span>
           </button>
         </div>
 
@@ -138,7 +136,7 @@ const Library: React.FC = () => {
             </svg>
             <input
               type="text"
-              placeholder="Search elements..."
+              placeholder="Search elements by name or tags..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input pl-10 w-full"
@@ -147,26 +145,14 @@ const Library: React.FC = () => {
 
           {/* Filters */}
           <div className="flex items-center space-x-3">
-            {/* Category Filter */}
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="input w-40"
-            >
-              {categories.map(category => (
-                <option key={category} value={category}>{category}</option>
-              ))}
-            </select>
-
             {/* Sort */}
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as 'name' | 'date' | 'type')}
+              onChange={(e) => setSortBy(e.target.value as 'name' | 'date')}
               className="input w-32"
             >
               <option value="date">Date</option>
               <option value="name">Name</option>
-              <option value="type">Type</option>
             </select>
 
             {/* View Mode */}
@@ -194,7 +180,29 @@ const Library: React.FC = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-6">
-        {filteredElements.length === 0 ? (
+        {isLoading && (
+          <div className="flex items-center justify-center h-full">
+            <div className="animate-spin w-12 h-12 border-4 border-primary-300 border-t-primary-600 rounded-full"></div>
+          </div>
+        )}
+        
+        {error && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center text-red-600">
+              <div className="text-5xl mb-4">⚠️</div>
+              <h3 className="text-xl font-semibold mb-2">Error</h3>
+              <p>{error}</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="mt-4 px-4 py-2 bg-primary-600 text-white rounded-md"
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {!isLoading && !error && sortedElements.length === 0 && (
           // Empty State
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-6xl mb-4">📦</div>
@@ -203,28 +211,39 @@ const Library: React.FC = () => {
             </h3>
             <p className="text-secondary-600 mb-6 max-w-md">
               {searchQuery 
-                ? 'Try adjusting your search terms or filters'
+                ? 'Try adjusting your search terms'
                 : 'Start creating and save your elements to build your personal library'
               }
             </p>
             {!searchQuery && (
-              <button className="btn-primary">
-                Create First Element
+              <button 
+                onClick={() => navigate('/editor')}
+                className="btn-primary"
+              >
+                Go to Editor
               </button>
             )}
           </div>
-        ) : viewMode === 'grid' ? (
+        )}
+        
+        {!isLoading && !error && sortedElements.length > 0 && viewMode === 'grid' && (
           // Grid View
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {filteredElements.map(element => (
+            {sortedElements.map(element => (
               <div
                 key={element.id}
                 className="card p-4 hover:shadow-md transition-all cursor-pointer group"
                 onClick={() => handleElementClick(element)}
+                draggable
+                onDragStart={(e) => handleElementDragStart(element, e)}
               >
                 <div className="relative">
-                  <div className="aspect-square bg-gradient-to-br from-primary-50 to-accent-50 rounded-lg flex items-center justify-center text-3xl mb-3">
-                    {element.thumbnail}
+                  <div className="aspect-square bg-white rounded-lg flex items-center justify-center mb-3 border border-secondary-200 overflow-hidden">
+                    <img 
+                      src={elementsApi.getElementFileUrl(element.id)} 
+                      alt={element.name}
+                      className="object-contain max-h-full max-w-full"
+                    />
                   </div>
                   <button
                     onClick={(e) => {
@@ -239,31 +258,38 @@ const Library: React.FC = () => {
                   </button>
                 </div>
                 <h3 className="font-medium text-secondary-900 text-sm mb-1 truncate">{element.name}</h3>
-                <p className="text-xs text-secondary-500 capitalize">{element.type}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {element.tags.slice(0, 2).map(tag => (
-                    <span key={tag} className="text-xs bg-secondary-100 text-secondary-600 px-2 py-0.5 rounded">
+                  {element.tags.slice(0, 3).map((tag, idx) => (
+                    <span key={idx} className="text-xs bg-secondary-100 text-secondary-600 px-2 py-0.5 rounded">
                       {tag}
                     </span>
                   ))}
-                  {element.tags.length > 2 && (
-                    <span className="text-xs text-secondary-400">+{element.tags.length - 2}</span>
+                  {element.tags.length > 3 && (
+                    <span className="text-xs text-secondary-400">+{element.tags.length - 3}</span>
                   )}
                 </div>
               </div>
             ))}
           </div>
-        ) : (
+        )}
+        
+        {!isLoading && !error && sortedElements.length > 0 && viewMode === 'list' && (
           // List View
           <div className="space-y-2">
-            {filteredElements.map(element => (
+            {sortedElements.map(element => (
               <div
                 key={element.id}
                 className="card p-4 hover:shadow-md transition-all cursor-pointer group flex items-center space-x-4"
                 onClick={() => handleElementClick(element)}
+                draggable
+                onDragStart={(e) => handleElementDragStart(element, e)}
               >
-                <div className="w-12 h-12 bg-gradient-to-br from-primary-50 to-accent-50 rounded-lg flex items-center justify-center text-xl">
-                  {element.thumbnail}
+                <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center border border-secondary-200 overflow-hidden">
+                  <img 
+                    src={elementsApi.getElementFileUrl(element.id)} 
+                    alt={element.name}
+                    className="object-contain max-h-full max-w-full"
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
@@ -281,15 +307,13 @@ const Library: React.FC = () => {
                     </button>
                   </div>
                   <div className="flex items-center space-x-4 mt-1">
-                    <span className="text-sm text-secondary-500 capitalize">{element.type}</span>
-                    <span className="text-sm text-secondary-500">{element.category}</span>
                     <span className="text-sm text-secondary-500">
-                      {element.createdAt.toLocaleDateString()}
+                      {new Date(element.created_at).toLocaleDateString()}
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {element.tags.map(tag => (
-                      <span key={tag} className="text-xs bg-secondary-100 text-secondary-600 px-2 py-0.5 rounded">
+                    {element.tags.map((tag, idx) => (
+                      <span key={idx} className="text-xs bg-secondary-100 text-secondary-600 px-2 py-0.5 rounded">
                         {tag}
                       </span>
                     ))}
@@ -304,14 +328,15 @@ const Library: React.FC = () => {
       {/* Footer Stats */}
       <div className="bg-white border-t border-secondary-200 px-6 py-3">
         <div className="flex items-center justify-between text-sm text-secondary-600">
-          <span>
-            Showing {filteredElements.length} of {mockElements.length} elements
-          </span>
-          <div className="flex items-center space-x-4">
-            <span>{mockElements.filter(e => e.type === 'text').length} Text</span>
-            <span>{mockElements.filter(e => e.type === 'shape').length} Shapes</span>
-            <span>{mockElements.filter(e => e.type === 'icon').length} Icons</span>
-            <span>{mockElements.filter(e => e.type === 'image').length} Images</span>
+          {!isLoading && (
+            <span>
+              Showing {sortedElements.length} elements
+            </span>
+          )}
+          <div className="flex items-center space-x-2">
+            <span className="text-primary-600">
+              Drag any element to your canvas to add it to your design
+            </span>
           </div>
         </div>
       </div>

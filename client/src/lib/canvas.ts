@@ -253,6 +253,77 @@ export class CanvasUtils {
     return this.canvas.toSVG()
   }
   
+  // Capture object as image
+  captureObjectAsImage(object: fabric.Object, format: string = 'png', padding: number = 10): Promise<File> {
+    return new Promise((resolve, reject) => {
+      if (!this.canvas) {
+        reject(new Error('Canvas not initialized'))
+        return
+      }
+      
+      try {
+        // Calculate object bounds with padding
+        const bounds = object.getBoundingRect()
+        const width = bounds.width + (padding * 2)
+        const height = bounds.height + (padding * 2)
+        
+        // Create a temporary canvas
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = width
+        tempCanvas.height = height
+        const tempCtx = tempCanvas.getContext('2d')
+        
+        if (!tempCtx) {
+          reject(new Error('Failed to get 2D context'))
+          return
+        }
+        
+        // Fill background white
+        tempCtx.fillStyle = '#FFFFFF'
+        tempCtx.fillRect(0, 0, width, height)
+        
+        // Clone the object and position it in the temporary canvas
+        object.clone((cloned: fabric.Object) => {
+          const tempFabricCanvas = new fabric.Canvas(tempCanvas, {
+            width,
+            height,
+            enableRetinaScaling: true
+          })
+          
+          cloned.set({
+            left: padding,
+            top: padding,
+            selectable: false,
+            hasControls: false
+          })
+          
+          // Add the cloned object to the temporary canvas
+          tempFabricCanvas.add(cloned)
+          tempFabricCanvas.renderAll()
+          
+          // Convert canvas to blob
+          tempCanvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error('Failed to convert canvas to blob'))
+              return
+            }
+            
+            // Create file from blob
+            const filename = `object_${Date.now()}.${format}`
+            const file = new File([blob], filename, { type: `image/${format}` })
+            
+            // Clean up
+            tempFabricCanvas.dispose()
+            
+            resolve(file)
+          }, `image/${format}`)
+        })
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }
+  
   // Zoom functions
   zoomIn(factor: number = 1.1): void {
     if (!this.canvas) return

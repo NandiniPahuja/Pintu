@@ -3,6 +3,9 @@ import { fabric } from 'fabric'
 import { useDesignCanvas } from './DesignCanvas'
 import Palette from './Palette'
 import { debounce } from '../lib/utils'
+import { fontApi, FontDetectionResult, handleApiError } from '../lib/api'
+import { canvasUtils } from '../lib/canvas'
+import { fontOptions } from './FontPreviewPanel'
 
 interface ColorPickerProps {
   label: string
@@ -61,12 +64,22 @@ const Slider: React.FC<SliderProps> = ({ label, value, min, max, step = 1, unit 
   </div>
 )
 
+interface FontDetectionState {
+  active: boolean;
+  results: FontDetectionResult | null;
+}
+
 const PropertiesPanel: React.FC = () => {
   const { canvas } = useDesignCanvas();
   const [selectedObject, setSelectedObject] = useState<fabric.Object | null>(null)
   const [objectType, setObjectType] = useState<string>('text')
   const [isImage, setIsImage] = useState<boolean>(false)
   const [isText, setIsText] = useState<boolean>(false)
+  const [detectingFont, setDetectingFont] = useState<boolean>(false)
+  const [fontDetection, setFontDetection] = useState<FontDetectionState>({
+    active: false,
+    results: null
+  })
   const [properties, setProperties] = useState<{
     // Position & Size
     x: number;
@@ -274,6 +287,33 @@ const PropertiesPanel: React.FC = () => {
     setProperties(prev => ({ ...prev, ...newProps }));
   };
 
+  // Detect font from text object
+  const detectFont = async () => {
+    if (!selectedObject || !isText || !canvas) return;
+    
+    try {
+      setDetectingFont(true);
+      
+      // Use canvasUtils to capture the text object as an image
+      const imageFile = await canvasUtils.captureObjectAsImage(selectedObject, 'png', 20);
+      
+      // Send image to API for font detection
+      const results = await fontApi.detectFont(imageFile);
+      
+      // Show results
+      setFontDetection({
+        active: true,
+        results
+      });
+      
+    } catch (error) {
+      console.error('Font detection error:', error);
+      alert('Error detecting font: ' + handleApiError(error));
+    } finally {
+      setDetectingFont(false);
+    }
+  };
+  
   // Update object property and fabric canvas
   const updateProperty = (key: string, value: any) => {
     // Sanitize numeric values to prevent NaN issues
@@ -585,19 +625,121 @@ const PropertiesPanel: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="label">Font Family</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="label">Font Family</label>
+                  {isText && (
+                    <button
+                      onClick={() => detectFont()}
+                      className="text-xs text-primary-600 hover:text-primary-800 font-medium flex items-center"
+                      disabled={detectingFont}
+                    >
+                      {detectingFont ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Detecting...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                          Detect Font
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
                 <select
                   value={properties.fontFamily}
                   onChange={(e) => updateProperty('fontFamily', e.target.value)}
                   className="input"
+                  style={{ fontFamily: properties.fontFamily }}
                 >
-                  <option value="Arial">Arial</option>
-                  <option value="Helvetica">Helvetica</option>
-                  <option value="Times New Roman">Times New Roman</option>
-                  <option value="Georgia">Georgia</option>
-                  <option value="Verdana">Verdana</option>
-                  <option value="Courier New">Courier New</option>
+                  {/* Standard system fonts */}
+                  <optgroup label="System Fonts">
+                    <option value="Arial">Arial</option>
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Georgia">Georgia</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Courier New">Courier New</option>
+                  </optgroup>
+                  
+                  {/* Google fonts */}
+                  <optgroup label="Google Fonts">
+                    {fontOptions.map(font => (
+                      <option key={font.family} value={font.family} style={{ fontFamily: font.family }}>
+                        {font.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
+                
+                {fontDetection.active && (
+                  <div className="mt-2 p-3 bg-primary-50 border border-primary-200 rounded-md">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="text-sm font-medium text-primary-800">Font Detection Results</h4>
+                      <button 
+                        onClick={() => setFontDetection({active: false, results: null})}
+                        className="text-xs text-primary-600 hover:text-primary-800"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    
+                    {fontDetection.results ? (
+                      <>
+                        <p className="text-xs text-secondary-600 mb-2">
+                          Detected category: <span className="font-medium">{fontDetection.results.category}</span>
+                        </p>
+                        <p className="text-xs font-medium text-secondary-800 mb-1">Suggestions:</p>
+                        <div className="space-y-2">
+                          {fontDetection.results.suggestions.map((font, idx) => {
+                            // Find the font option with matching name
+                            const fontOption = fontOptions.find(
+                              f => f.name === font || f.family === font
+                            );
+                            
+                            return (
+                              <button
+                                key={idx}
+                                className="flex items-center justify-between w-full p-2 border border-primary-200 hover:border-primary-400 rounded bg-white text-left"
+                                onClick={() => {
+                                  if (fontOption) {
+                                    updateProperty('fontFamily', fontOption.family);
+                                  } else {
+                                    updateProperty('fontFamily', font);
+                                  }
+                                }}
+                              >
+                                <span 
+                                  style={{ 
+                                    fontFamily: fontOption?.family || font 
+                                  }} 
+                                  className="text-sm"
+                                >
+                                  {font}
+                                </span>
+                                <svg className="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center py-2">
+                        <div className="animate-spin inline-block w-6 h-6 border-2 border-primary-600 border-t-transparent rounded-full"></div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
