@@ -110,6 +110,14 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
       borderScaleFactor: 2,
     })
 
+    // Double-click to edit text
+    fabricCanvas.on('mouse:dblclick', (options) => {
+      if (options.target && options.target instanceof fabric.IText) {
+        options.target.enterEditing();
+        options.target.selectAll();
+      }
+    });
+
     setCanvas(fabricCanvas)
 
     // Save initial state
@@ -423,7 +431,8 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
   const addText = useCallback((text: string, options: fabric.ITextOptions = {}) => {
     if (!canvas) return
 
-    const textObj = new fabric.Text(text, {
+    // Use IText for better editing experience
+    const textObj = new fabric.IText(text, {
       left: canvas.getWidth() / 2,
       top: canvas.getHeight() / 2,
       originX: 'center',
@@ -433,12 +442,20 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
       fill: '#000000',
       id: `text_${Date.now()}`,
       name: `Text ${canvas.getObjects().length + 1}`,
+      editable: true,
+      cursorColor: '#4F46E5',
+      cursorWidth: 2,
+      cursorDuration: 600,
+      selectionColor: 'rgba(79, 70, 229, 0.3)',
       ...options
     })
 
     canvas.add(textObj)
     canvas.setActiveObject(textObj)
     canvas.requestRenderAll()
+    
+    // Return the created object
+    return textObj;
   }, [canvas])
 
   const deleteSelected = useCallback(() => {

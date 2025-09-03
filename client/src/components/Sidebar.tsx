@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import UploadPanel from './UploadPanel'
+import TextPanel from './TextPanel'
 import { useStore } from '../lib/store'
 
 interface Tool {
@@ -191,33 +192,8 @@ const Sidebar: React.FC = () => {
 
       {/* Text Section */}
       {activeTool === 'text' && (
-        <div className="flex-1 p-4">
-          <div className="space-y-4">
-            <div>
-              <h4 className="text-sm font-medium text-secondary-900 mb-3">Text Styles</h4>
-              <div className="space-y-2">
-                {[
-                  { name: 'Heading', size: 'text-2xl', weight: 'font-bold' },
-                  { name: 'Subheading', size: 'text-lg', weight: 'font-semibold' },
-                  { name: 'Body', size: 'text-base', weight: 'font-normal' },
-                  { name: 'Caption', size: 'text-sm', weight: 'font-normal' }
-                ].map((style, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleElementClick(`text-${style.name.toLowerCase()}`)}
-                    className="w-full p-3 text-left border border-secondary-200 rounded-lg hover:border-primary-300 hover:bg-primary-50 transition-all"
-                  >
-                    <div className={`${style.size} ${style.weight} text-secondary-900`}>
-                      {style.name}
-                    </div>
-                    <div className="text-xs text-secondary-500 mt-1">
-                      Click to add {style.name.toLowerCase()}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+        <div className="flex-1 overflow-hidden">
+          <TextPanel />
         </div>
       )}
 

@@ -26,6 +26,15 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("Segmentation module not available - image segmentation will not work")
 
+# Import font detection module
+try:
+    from .font_detect import detect_font, detect_font_from_base64
+    FONT_DETECTION_AVAILABLE = True
+except ImportError:
+    FONT_DETECTION_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Font detection module not available - font detection will not work")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -469,6 +478,156 @@ async def segment_image_endpoint(file: UploadFile = File(...)):
             }
         )
 
+@app.post("/font-detect")
+async def font_detection_endpoint(file: UploadFile = File(...)):
+    """
+    Detect font category from text image and suggest matching Google Fonts
+    
+    Args:
+        file: Uploaded image file (multipart/form-data) containing text
+        
+    Returns:
+        JSON response with:
+        - category: detected font category
+        - suggestions: list of suggested Google Fonts
+        - confidence: confidence score of the detection
+        
+    Raises:
+        400: Invalid file format or corrupted image
+        413: File size too large (max 5MB)
+        500: Font detection processing error
+    """
+    try:
+        # Validate file type
+        if not file.content_type or not file.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "error": "invalid_file_type",
+                    "message": "File must be an image (PNG, JPG, JPEG, WEBP, BMP, TIFF)",
+                    "accepted_types": ["image/png", "image/jpeg", "image/webp", "image/bmp", "image/tiff"]
+                }
+            )
+        
+        # Read the uploaded file
+        contents = await file.read()
+        logger.info(f"Processing image for font detection: {file.filename}, size: {len(contents)} bytes, type: {file.content_type}")
+        
+        # Validate file size (max 5MB - smaller than other endpoints as we expect text images)
+        max_size = 5 * 1024 * 1024  # 5MB
+        if len(contents) > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error": "file_too_large",
+                    "message": f"File size ({len(contents)} bytes) exceeds maximum allowed size",
+                    "max_size_bytes": max_size,
+                    "max_size_mb": max_size // (1024 * 1024)
+                }
+            )
+        
+        # Convert to PIL Image with error handling
+        try:
+            input_image = Image.open(io.BytesIO(contents))
+            
+            # Verify image can be processed
+            input_image.verify()
+            
+            # Reload image after verification (verify() invalidates the image)
+            input_image = Image.open(io.BytesIO(contents))
+            
+            # Get image dimensions for logging
+            width, height = input_image.size
+            logger.info(f"Image dimensions: {width}x{height}, mode: {input_image.mode}")
+            
+            # Validate image dimensions (reasonable limits)
+            if width > 4096 or height > 4096:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "image_too_large",
+                        "message": f"Image dimensions ({width}x{height}) exceed maximum allowed size",
+                        "max_width": 4096,
+                        "max_height": 4096
+                    }
+                )
+            
+            if width < 30 or height < 30:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "image_too_small",
+                        "message": f"Image dimensions ({width}x{height}) are too small for font detection",
+                        "min_width": 30,
+                        "min_height": 30
+                    }
+                )
+                
+        except Exception as e:
+            logger.error(f"Error processing image file: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_image",
+                    "message": "Could not process image file - file may be corrupted or unsupported format",
+                    "details": str(e)
+                }
+            )
+        
+        # Perform font detection
+        try:
+            # Check if font detection is available
+            if not FONT_DETECTION_AVAILABLE:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": "service_unavailable",
+                        "message": "Font detection service is not available",
+                        "details": "Font detection module not installed"
+                    }
+                )
+            
+            # Run font detection
+            detection_result = detect_font(input_image)
+            
+            logger.info(f"Font detection successful: {detection_result['category']}")
+            
+            # Return JSON response with detection results
+            return {
+                "success": True,
+                "category": detection_result['category'],
+                "suggestions": detection_result['suggestions'],
+                "confidence": detection_result['confidence'],
+                "fallback": detection_result.get('fallback', False)
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in font detection: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "font_detection_failed",
+                    "message": "Failed to process image for font detection",
+                    "details": str(e)
+                }
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in font detection: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_server_error",
+                "message": "An unexpected error occurred during font detection",
+                "details": str(e)
+            }
+        )
+
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
@@ -478,7 +637,8 @@ async def root():
         "endpoints": {
             "health": "/health",
             "remove_background": "/remove-bg (POST)",
-            "segment_image": "/segment (POST)"
+            "segment_image": "/segment (POST)",
+            "font_detection": "/font-detect (POST)"
         }
     }
 

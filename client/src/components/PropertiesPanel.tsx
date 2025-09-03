@@ -174,9 +174,20 @@ const PropertiesPanel: React.FC = () => {
       updatePropertiesFromObject(activeObject);
     }
     
+    // Also listen for text editing changes to keep properties panel in sync
+    const handleTextEditing = (e: any) => {
+      const textObj = e.target;
+      if (textObj && (textObj.type === 'text' || textObj.type === 'textbox' || textObj.type === 'i-text')) {
+        updatePropertiesFromObject(textObj);
+      }
+    }
+    
     canvas.on('selection:created', handleSelection)
     canvas.on('selection:updated', handleSelection)
     canvas.on('selection:cleared', handleSelection)
+    canvas.on('text:changed', handleTextEditing)
+    canvas.on('text:editing:entered', handleTextEditing)
+    canvas.on('text:editing:exited', handleTextEditing)
     
     // Check if there's already a selected object
     const activeObject = canvas.getActiveObject();
@@ -188,6 +199,9 @@ const PropertiesPanel: React.FC = () => {
       canvas.off('selection:created', handleSelection)
       canvas.off('selection:updated', handleSelection)
       canvas.off('selection:cleared', handleSelection)
+      canvas.off('text:changed', handleTextEditing)
+      canvas.off('text:editing:entered', handleTextEditing)
+      canvas.off('text:editing:exited', handleTextEditing)
     }
   }, [canvas])
 
@@ -804,7 +818,38 @@ const PropertiesPanel: React.FC = () => {
           <h4 className="text-sm font-semibold text-secondary-900 mb-3">Actions</h4>
           <div className="space-y-2">
             <button
-              onClick={() => console.log('Duplicate object')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                
+                // Clone the selected object
+                selectedObject.clone((cloned: fabric.Object) => {
+                  if (!canvas) return;
+                  
+                  // Offset the cloned object slightly
+                  cloned.set({
+                    left: (selectedObject.left || 0) + 10,
+                    top: (selectedObject.top || 0) + 10,
+                    evented: true,
+                    id: `${objectType}_${Date.now()}`,
+                    name: `${objectType} copy`
+                  });
+                  
+                  // If it's an IText, ensure it's properly set up
+                  if (isText && cloned instanceof fabric.IText) {
+                    cloned.set({
+                      editable: true,
+                      cursorColor: '#4F46E5',
+                      cursorWidth: 2,
+                      cursorDuration: 600,
+                      selectionColor: 'rgba(79, 70, 229, 0.3)'
+                    });
+                  }
+                  
+                  canvas.add(cloned);
+                  canvas.setActiveObject(cloned);
+                  canvas.requestRenderAll();
+                });
+              }}
               className="btn-outline w-full justify-center"
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -813,7 +858,11 @@ const PropertiesPanel: React.FC = () => {
               Duplicate
             </button>
             <button
-              onClick={() => console.log('Delete object')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                canvas.remove(selectedObject);
+                canvas.requestRenderAll();
+              }}
               className="btn-outline w-full justify-center text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400"
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -829,7 +878,12 @@ const PropertiesPanel: React.FC = () => {
           <h4 className="text-sm font-semibold text-secondary-900 mb-3">Layer Order</h4>
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() => console.log('Bring to front')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                selectedObject.bringToFront();
+                canvas.requestRenderAll();
+                canvas.fire('object:modified', { target: selectedObject });
+              }}
               className="btn-outline text-xs justify-center"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -838,7 +892,12 @@ const PropertiesPanel: React.FC = () => {
               Front
             </button>
             <button
-              onClick={() => console.log('Send to back')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                selectedObject.sendToBack();
+                canvas.requestRenderAll();
+                canvas.fire('object:modified', { target: selectedObject });
+              }}
               className="btn-outline text-xs justify-center"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -847,7 +906,12 @@ const PropertiesPanel: React.FC = () => {
               Back
             </button>
             <button
-              onClick={() => console.log('Bring forward')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                selectedObject.bringForward();
+                canvas.requestRenderAll();
+                canvas.fire('object:modified', { target: selectedObject });
+              }}
               className="btn-outline text-xs justify-center"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -856,7 +920,12 @@ const PropertiesPanel: React.FC = () => {
               Forward
             </button>
             <button
-              onClick={() => console.log('Send backward')}
+              onClick={() => {
+                if (!canvas || !selectedObject) return;
+                selectedObject.sendBackwards();
+                canvas.requestRenderAll();
+                canvas.fire('object:modified', { target: selectedObject });
+              }}
               className="btn-outline text-xs justify-center"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">

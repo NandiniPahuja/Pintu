@@ -91,4 +91,32 @@
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background: theme('colors.secondary.400');
   }
+  
+  /* Hide scrollbar for specific elements */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;     /* Firefox */
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
+  }
+  
+  /* Font preview styling */
+  .font-preview {
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 10px;
+    line-height: 1.5;
+  }
+  
+  /* Text editing styles for Fabric.js */
+  .canvas-container .fabric-text-editing-cursor {
+    animation: blink 0.5s linear infinite alternate;
+  }
+  
+  @keyframes blink {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
 }
