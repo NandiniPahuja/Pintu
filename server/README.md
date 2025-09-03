@@ -1,10 +1,11 @@
 # Pintu Server
 
-FastAPI backend for the Pintu design application with image processing capabilities.
+FastAPI backend for the Pintu design application with advanced image processing capabilities.
 
 ## Features
 
-- **Background Removal**: Remove backgrounds from images using AI (rembg)
+- **Background Removal**: Remove backgrounds from images using AI (rembg with u2net model)
+- **Image Segmentation**: Segment images into multiple objects using MobileSAM
 - **Image Processing**: Advanced image manipulation with OpenCV and Pillow
 - **CORS Support**: Configured for frontend development
 - **Health Monitoring**: Health check endpoints
@@ -38,10 +39,42 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. **Run the server:**
+3. **Download MobileSAM models (for segmentation):**
+```bash
+python download_models.py
+```
+
+4. **Run the server:**
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+## MobileSAM Model Setup
+
+The `/segment` endpoint requires MobileSAM models to be downloaded. These models provide lightweight Segment Anything functionality optimized for CPU inference.
+
+### Automatic Download (Recommended)
+```bash
+python download_models.py
+```
+
+This will download (~90MB total):
+- `mobile_sam_encoder.onnx` (~40MB) - Image encoder for ONNX Runtime
+- `mobile_sam_decoder.onnx` (~4MB) - Mask decoder for ONNX Runtime  
+- `mobile_sam.pt` (~40MB) - PyTorch model (fallback)
+
+### Manual Download
+If automatic download fails, manually download from:
+- https://github.com/ChaoningZhang/MobileSAM/releases/download/v1.0/mobile_sam_encoder.onnx
+- https://github.com/ChaoningZhang/MobileSAM/releases/download/v1.0/mobile_sam_decoder.onnx
+- https://github.com/ChaoningZhang/MobileSAM/releases/download/v1.0/mobile_sam.pt
+
+Place files in `app/models/` directory.
+
+### Runtime Options
+1. **ONNX Runtime** (Preferred): Fastest CPU inference
+2. **PyTorch CPU**: Fallback if ONNX Runtime unavailable
+3. **Traditional CV**: Basic segmentation if models unavailable
 
 ## API Endpoints
 
@@ -58,6 +91,42 @@ Content-Type: multipart/form-data
 Body: file (image file)
 Response: PNG image with transparent background
 ```
+
+### Image Segmentation
+```
+POST /segment
+Content-Type: multipart/form-data
+Body: file (image file)
+Response: JSON with segmentation results
+```
+
+**Segmentation Response Format:**
+```json
+{
+  "success": true,
+  "image_info": {
+    "width": 300,
+    "height": 300,
+    "mode": "RGB",
+    "filename": "image.png"
+  },
+  "segments": [
+    {
+      "id": "segment_0",
+      "bbox": [50, 50, 100, 100],
+      "maskArea": 7850,
+      "pngBase64": "iVBORw0KGgoAAAANSUhEUgAA..."
+    }
+  ],
+  "total_segments": 1
+}
+```
+
+Each segment contains:
+- `id`: Unique segment identifier
+- `bbox`: Bounding box [x, y, width, height]
+- `maskArea`: Number of pixels in the mask
+- `pngBase64`: Base64-encoded PNG cutout with transparency
 
 ### Root Information
 ```
@@ -159,11 +228,23 @@ tests/
 
 The test suite covers:
 
+**Background Removal (`/remove-bg`):**
 - ✅ **Successful background removal** (PNG, JPEG, WEBP, BMP)
 - ✅ **File validation** (type, size, dimensions)
 - ✅ **Error handling** (corrupted files, invalid formats)
 - ✅ **Edge cases** (empty files, huge files, tiny images)
 - ✅ **Response validation** (headers, content type, filenames)
 - ✅ **Different image modes** (RGB, RGBA, grayscale)
+
+**Image Segmentation (`/segment`):**
+- ✅ **Successful segmentation** with multiple objects
+- ✅ **Response format validation** (JSON structure, base64 PNGs)
+- ✅ **Segment metadata** (bounding boxes, mask areas)
+- ✅ **File validation** (same as remove-bg)
+- ✅ **Different image formats** and modes
+- ✅ **Edge cases** (small images, grayscale, RGBA)
+
+**General:**
 - ✅ **API documentation** accessibility
 - ✅ **Integration tests** for full workflow
+- ✅ **Health checks** and root endpoint

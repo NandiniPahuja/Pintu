@@ -1,4 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { fabric } from 'fabric'
+import { useDesignCanvas } from './DesignCanvas'
+import Palette from './Palette'
+import { debounce } from '../lib/utils'
 
 interface ColorPickerProps {
   label: string
@@ -58,8 +62,45 @@ const Slider: React.FC<SliderProps> = ({ label, value, min, max, step = 1, unit 
 )
 
 const PropertiesPanel: React.FC = () => {
-  const [selectedObject, setSelectedObject] = useState<string | null>('text')
-  const [properties, setProperties] = useState({
+  const { canvas } = useDesignCanvas();
+  const [selectedObject, setSelectedObject] = useState<fabric.Object | null>(null)
+  const [objectType, setObjectType] = useState<string>('text')
+  const [isImage, setIsImage] = useState<boolean>(false)
+  const [isText, setIsText] = useState<boolean>(false)
+  const [properties, setProperties] = useState<{
+    // Position & Size
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation: number;
+    
+    // Text Properties
+    text: string;
+    fontSize: number;
+    fontFamily: string;
+    fontWeight: string;
+    
+    // Appearance
+    fillColor: string;
+    strokeColor: string;
+    strokeWidth: number;
+    opacity: number;
+    
+    // Effects
+    blur: number;
+    shadow: boolean;
+    shadowColor: string;
+    shadowBlur: number;
+    shadowOffsetX: number;
+    shadowOffsetY: number;
+
+    // HSL adjustments for images
+    hslEnabled: boolean;
+    hue: number;
+    saturation: number;
+    brightness: number;
+  }>({
     // Position & Size
     x: 100,
     y: 100,
@@ -86,13 +127,348 @@ const PropertiesPanel: React.FC = () => {
     shadowBlur: 4,
     shadowOffsetX: 2,
     shadowOffsetY: 2,
+    
+    // HSL adjustments for images
+    hslEnabled: false,
+    hue: 0,
+    saturation: 0,
+    brightness: 0,
   })
+  
+  // Create a debounced update function to prevent excessive updates
+  const debouncedUpdateObject = useCallback(
+    debounce((obj: fabric.Object, props: Record<string, any>) => {
+      if (!canvas || !obj) return;
+      
+      obj.set(props);
+      canvas.requestRenderAll();
+      
+      // Trigger object:modified event for history
+      canvas.fire('object:modified', { target: obj });
+    }, 100),
+    [canvas]
+  );
 
+  // Listen for object selection changes
+  useEffect(() => {
+    if (!canvas) return
+    
+    const handleSelection = () => {
+      const activeObject = canvas.getActiveObject()
+      
+      if (!activeObject) {
+        setSelectedObject(null);
+        setObjectType('');
+        setIsImage(false);
+        setIsText(false);
+        return;
+      }
+      
+      setSelectedObject(activeObject);
+      const type = activeObject.type || 'object';
+      setObjectType(type);
+      setIsImage(type === 'image');
+      setIsText(type === 'text' || type === 'textbox' || type === 'i-text');
+      
+      // Update properties based on selected object
+      updatePropertiesFromObject(activeObject);
+    }
+    
+    canvas.on('selection:created', handleSelection)
+    canvas.on('selection:updated', handleSelection)
+    canvas.on('selection:cleared', handleSelection)
+    
+    // Check if there's already a selected object
+    const activeObject = canvas.getActiveObject();
+    if (activeObject) {
+      handleSelection();
+    }
+    
+    return () => {
+      canvas.off('selection:created', handleSelection)
+      canvas.off('selection:updated', handleSelection)
+      canvas.off('selection:cleared', handleSelection)
+    }
+  }, [canvas])
+
+  // Update properties state based on selected object
+  const updatePropertiesFromObject = (obj: fabric.Object) => {
+    if (!obj) return;
+
+    const newProps: any = {
+      // Position & Size
+      x: Math.round(obj.left || 0),
+      y: Math.round(obj.top || 0),
+      width: Math.round(obj.getScaledWidth() || 0),
+      height: Math.round(obj.getScaledHeight() || 0),
+      rotation: Math.round(obj.angle || 0),
+      
+      // Appearance
+      fillColor: obj.fill as string || '#000000',
+      strokeColor: obj.stroke as string || '#000000',
+      strokeWidth: obj.strokeWidth || 0,
+      opacity: Math.round((obj.opacity || 1) * 100),
+      
+      // HSL properties for images
+      hue: 0,
+      saturation: 0,
+      brightness: 0,
+      hslEnabled: false,
+    };
+    
+    // Text-specific properties
+    if (isText) {
+      const textObj = obj as fabric.Text;
+      newProps.text = textObj.text || '';
+      newProps.fontSize = textObj.fontSize || 24;
+      newProps.fontFamily = textObj.fontFamily || 'Arial';
+      newProps.fontWeight = textObj.fontWeight || 'normal';
+    }
+    
+    // Shadow properties
+    if (obj.shadow) {
+      const shadow = obj.shadow as fabric.Shadow;
+      newProps.shadow = true;
+      newProps.shadowColor = shadow.color || '#000000';
+      newProps.shadowBlur = shadow.blur || 4;
+      newProps.shadowOffsetX = shadow.offsetX || 2;
+      newProps.shadowOffsetY = shadow.offsetY || 2;
+    } else {
+      newProps.shadow = false;
+    }
+    
+    // Image filter properties
+    if (isImage) {
+      const imgObj = obj as fabric.Image;
+      const filters = imgObj.filters || [];
+      
+      // Find blur filter if exists
+      const blurFilter = filters.find((f: any) => f instanceof fabric.Image.filters.Blur) as fabric.Image.filters.Blur | undefined;
+      newProps.blur = blurFilter ? blurFilter.blur * 10 : 0; // Scale up for better slider range
+      
+      // Find HSL filters if they exist
+      const hueFilter = filters.find((f: any) => f instanceof fabric.Image.filters.HueRotation) as fabric.Image.filters.HueRotation | undefined;
+      const saturationFilter = filters.find((f: any) => f instanceof fabric.Image.filters.Saturation) as fabric.Image.filters.Saturation | undefined;
+      const brightnessFilter = filters.find((f: any) => f instanceof fabric.Image.filters.Brightness) as fabric.Image.filters.Brightness | undefined;
+      
+      newProps.hslEnabled = !!(hueFilter || saturationFilter || brightnessFilter);
+      newProps.hue = hueFilter ? Math.round((hueFilter.rotation || 0) * 180 / Math.PI) : 0; // Convert radians to degrees
+      newProps.saturation = saturationFilter ? Math.round((saturationFilter.saturation - 1) * 100) : 0; // Convert to percentage
+      newProps.brightness = brightnessFilter ? Math.round(brightnessFilter.brightness * 100) : 0; // Convert to percentage
+    }
+    
+    setProperties(prev => ({ ...prev, ...newProps }));
+  };
+
+  // Update object property and fabric canvas
   const updateProperty = (key: string, value: any) => {
-    setProperties(prev => ({ ...prev, [key]: value }))
-    // TODO: Update canvas object
-    console.log(`Updated ${key}:`, value)
-  }
+    // Sanitize numeric values to prevent NaN issues
+    if (typeof value === 'number' || !isNaN(Number(value))) {
+      value = sanitizeNumeric(value);
+    }
+    
+    setProperties(prev => ({ ...prev, [key]: value }));
+    
+    if (!selectedObject || !canvas) return;
+    
+    // Map property keys to fabric object properties
+    const updates: Record<string, any> = {};
+    
+    switch(key) {
+      case 'x':
+        updates.left = value;
+        break;
+      case 'y':
+        updates.top = value;
+        break;
+      case 'width':
+        // Keep aspect ratio if shift key is pressed (would need UI for this option)
+        const scaleX = value / (selectedObject.getScaledWidth() || 1);
+        updates.scaleX = scaleX;
+        break;
+      case 'height':
+        const scaleY = value / (selectedObject.getScaledHeight() || 1);
+        updates.scaleY = scaleY;
+        break;
+      case 'rotation':
+        updates.angle = value;
+        break;
+      case 'fillColor':
+        updates.fill = value;
+        break;
+      case 'strokeColor':
+        updates.stroke = value;
+        break;
+      case 'strokeWidth':
+        updates.strokeWidth = value;
+        break;
+      case 'opacity':
+        updates.opacity = value / 100;
+        break;
+      case 'text':
+        if (isText) {
+          updates.text = value;
+        }
+        break;
+      case 'fontSize':
+        if (isText) {
+          updates.fontSize = value;
+        }
+        break;
+      case 'fontFamily':
+        if (isText) {
+          updates.fontFamily = value;
+        }
+        break;
+      case 'fontWeight':
+        if (isText) {
+          updates.fontWeight = value;
+        }
+        break;
+      case 'blur':
+        if (isImage) {
+          // Apply blur filter to image
+          applyBlurFilter(selectedObject as fabric.Image, value);
+          return; // Skip debounced update as we're handling it separately
+        }
+        break;
+      case 'hslEnabled':
+      case 'hue':
+      case 'saturation':
+      case 'brightness':
+        if (isImage) {
+          applyHSLFilter();
+          return; // Skip debounced update
+        }
+        break;
+      case 'shadow':
+        applyShadow();
+        return; // Skip debounced update
+      case 'shadowColor':
+      case 'shadowBlur':
+      case 'shadowOffsetX':
+      case 'shadowOffsetY':
+        applyShadow();
+        return; // Skip debounced update
+    }
+    
+    // Apply updates with debouncing
+    debouncedUpdateObject(selectedObject, updates);
+  };
+  
+  // Apply blur filter to image
+  const applyBlurFilter = (imgObj: fabric.Image, blurValue: number) => {
+    if (!canvas || !imgObj) return;
+    
+    // Remove existing blur filter
+    const filters = imgObj.filters || [];
+    const newFilters = filters.filter((f: any) => !(f instanceof fabric.Image.filters.Blur));
+    
+    // Add new blur filter if value > 0
+    if (blurValue > 0) {
+      newFilters.push(new fabric.Image.filters.Blur({
+        blur: blurValue / 10 // Scale down for fabric.js (0-1 range)
+      }));
+    }
+    
+    imgObj.filters = newFilters;
+    
+    // Apply filters and render
+    imgObj.applyFilters();
+    canvas.requestRenderAll();
+    
+    // Trigger object:modified event for history
+    canvas.fire('object:modified', { target: imgObj });
+  };
+  
+  // Apply shadow to object
+  const applyShadow = () => {
+    if (!canvas || !selectedObject) return;
+    
+    const { shadow, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY } = properties;
+    
+    if (shadow) {
+      selectedObject.set('shadow', new fabric.Shadow({
+        color: shadowColor,
+        blur: shadowBlur,
+        offsetX: shadowOffsetX,
+        offsetY: shadowOffsetY
+      }));
+    } else {
+      selectedObject.set('shadow', null);
+    }
+    
+    canvas.requestRenderAll();
+    canvas.fire('object:modified', { target: selectedObject });
+  };
+  
+  /**
+   * Ensures numeric values are valid numbers to prevent NaN issues
+   * @param value - Value to sanitize
+   * @param defaultValue - Default value if invalid
+   */
+  const sanitizeNumeric = (value: any, defaultValue = 0): number => {
+    const num = Number(value);
+    return isNaN(num) ? defaultValue : num;
+  };
+  
+  // Apply HSL filters to image
+  const applyHSLFilter = () => {
+    if (!canvas || !selectedObject || !isImage) return;
+    
+    const imgObj = selectedObject as fabric.Image;
+    const { hslEnabled } = properties;
+    
+    // Sanitize HSL values to prevent NaN issues
+    const hue = sanitizeNumeric(properties.hue);
+    const saturation = sanitizeNumeric(properties.saturation);
+    const brightness = sanitizeNumeric(properties.brightness);
+    
+    // Get existing filters without HSL ones
+    const filters = imgObj.filters || [];
+    const newFilters = filters.filter((f: any) => 
+      !(f instanceof fabric.Image.filters.HueRotation) && 
+      !(f instanceof fabric.Image.filters.Saturation) && 
+      !(f instanceof fabric.Image.filters.Brightness)
+    );
+    
+    // Add new HSL filters if enabled
+    if (hslEnabled) {
+      // Add hue filter if not zero
+      if (hue !== 0) {
+        // Convert degrees to radians for fabric.js
+        const hueRadians = (hue / 180) * Math.PI;
+        newFilters.push(new fabric.Image.filters.HueRotation({
+          rotation: hueRadians
+        }));
+      }
+      
+      // Add saturation filter if not zero
+      if (saturation !== 0) {
+        // Convert from percentage (-100 to 100) to fabric's range (0 to 2)
+        // where 0 is grayscale, 1 is normal, 2 is oversaturated
+        const saturationValue = 1 + (saturation / 100);
+        newFilters.push(new fabric.Image.filters.Saturation({
+          saturation: saturationValue
+        }));
+      }
+      
+      // Add brightness filter if not zero
+      if (brightness !== 0) {
+        // Convert from percentage (-100 to 100) to fabric's range (-1 to 1)
+        const brightnessValue = brightness / 100;
+        newFilters.push(new fabric.Image.filters.Brightness({
+          brightness: brightnessValue
+        }));
+      }
+    }
+    
+    // Apply filters
+    imgObj.filters = newFilters;
+    imgObj.applyFilters();
+    canvas.requestRenderAll();
+    canvas.fire('object:modified', { target: imgObj });
+  };
 
   if (!selectedObject) {
     return (
@@ -113,10 +489,18 @@ const PropertiesPanel: React.FC = () => {
       {/* Header */}
       <div className="p-4 border-b border-secondary-200 bg-secondary-50">
         <h3 className="font-semibold text-secondary-900">Properties</h3>
-        <p className="text-sm text-secondary-600 capitalize">{selectedObject} Object</p>
+        <p className="text-sm text-secondary-600 capitalize">{isImage ? 'Image' : isText ? 'Text' : 'Object'}</p>
       </div>
 
       <div className="p-4 space-y-6">
+        {/* Color Palette - only shown for image objects */}
+        {isImage && (
+          <section>
+            <h4 className="text-sm font-semibold text-secondary-900 mb-3">Color Palette</h4>
+            <Palette />
+          </section>
+        )}
+        
         {/* Position & Size */}
         <section>
           <h4 className="text-sm font-semibold text-secondary-900 mb-3">Position & Size</h4>
@@ -173,7 +557,7 @@ const PropertiesPanel: React.FC = () => {
         </section>
 
         {/* Text Properties (only for text objects) */}
-        {selectedObject === 'text' && (
+        {isText && (
           <section>
             <h4 className="text-sm font-semibold text-secondary-900 mb-3">Text</h4>
             <div className="space-y-3">
@@ -226,6 +610,25 @@ const PropertiesPanel: React.FC = () => {
                   </select>
                 </div>
               </div>
+
+              {/* Text-specific border/outline controls */}
+              <div className="pt-2 border-t border-secondary-100">
+                <h5 className="text-xs font-medium text-secondary-700 mb-2">Text Outline</h5>
+                <ColorPicker
+                  label="Outline Color"
+                  value={properties.strokeColor}
+                  onChange={(color) => updateProperty('strokeColor', color)}
+                />
+                <Slider
+                  label="Outline Width"
+                  value={properties.strokeWidth}
+                  min={0}
+                  max={5}
+                  step={0.1}
+                  unit="px"
+                  onChange={(value) => updateProperty('strokeWidth', value)}
+                />
+              </div>
             </div>
           </section>
         )}
@@ -234,24 +637,34 @@ const PropertiesPanel: React.FC = () => {
         <section>
           <h4 className="text-sm font-semibold text-secondary-900 mb-3">Appearance</h4>
           <div className="space-y-3">
-            <ColorPicker
-              label="Fill Color"
-              value={properties.fillColor}
-              onChange={(color) => updateProperty('fillColor', color)}
-            />
-            <ColorPicker
-              label="Stroke Color"
-              value={properties.strokeColor}
-              onChange={(color) => updateProperty('strokeColor', color)}
-            />
-            <Slider
-              label="Stroke Width"
-              value={properties.strokeWidth}
-              min={0}
-              max={20}
-              unit="px"
-              onChange={(value) => updateProperty('strokeWidth', value)}
-            />
+            {!isText && (
+              <>
+                <ColorPicker
+                  label="Fill Color"
+                  value={properties.fillColor}
+                  onChange={(color) => updateProperty('fillColor', color)}
+                />
+                {!isImage && (
+                  <>
+                    <ColorPicker
+                      label="Stroke Color"
+                      value={properties.strokeColor}
+                      onChange={(color) => updateProperty('strokeColor', color)}
+                    />
+                    <Slider
+                      label="Stroke Width"
+                      value={properties.strokeWidth}
+                      min={0}
+                      max={20}
+                      unit="px"
+                      onChange={(value) => updateProperty('strokeWidth', value)}
+                    />
+                  </>
+                )}
+              </>
+            )}
+            
+            {/* Opacity slider for all object types */}
             <Slider
               label="Opacity"
               value={properties.opacity}
@@ -267,15 +680,73 @@ const PropertiesPanel: React.FC = () => {
         <section>
           <h4 className="text-sm font-semibold text-secondary-900 mb-3">Effects</h4>
           <div className="space-y-3">
-            <Slider
-              label="Blur"
-              value={properties.blur}
-              min={0}
-              max={20}
-              unit="px"
-              onChange={(value) => updateProperty('blur', value)}
-            />
+            {/* Image specific effects */}
+            {isImage && (
+              <>
+                <Slider
+                  label="Blur"
+                  value={properties.blur}
+                  min={0}
+                  max={20}
+                  unit="px"
+                  onChange={(value) => updateProperty('blur', value)}
+                />
+                
+                {/* HSL Adjustments */}
+                <div className="mt-4">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={properties.hslEnabled}
+                      onChange={(e) => updateProperty('hslEnabled', e.target.checked)}
+                      className="rounded border-secondary-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="text-sm font-medium text-secondary-700">HSL Adjustment</span>
+                  </label>
+                </div>
+
+                {properties.hslEnabled && (
+                  <div className="space-y-3 pl-6 border-l-2 border-secondary-200">
+                    <Slider
+                      label="Hue"
+                      value={properties.hue}
+                      min={-180}
+                      max={180}
+                      unit="°"
+                      onChange={(value) => updateProperty('hue', value)}
+                    />
+                    <Slider
+                      label="Saturation"
+                      value={properties.saturation}
+                      min={-100}
+                      max={100}
+                      unit="%"
+                      onChange={(value) => updateProperty('saturation', value)}
+                    />
+                    <Slider
+                      label="Brightness"
+                      value={properties.brightness}
+                      min={-100}
+                      max={100}
+                      unit="%"
+                      onChange={(value) => updateProperty('brightness', value)}
+                    />
+                    <button
+                      onClick={() => {
+                        updateProperty('hue', 0);
+                        updateProperty('saturation', 0);
+                        updateProperty('brightness', 0);
+                      }}
+                      className="text-sm text-primary-600 hover:text-primary-700 hover:underline mt-1"
+                    >
+                      Reset adjustments
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
             
+            {/* Shadow for all object types */}
             <div>
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
