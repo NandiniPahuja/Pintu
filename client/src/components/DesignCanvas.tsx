@@ -21,6 +21,13 @@ interface DesignCanvasContextType {
   replaceImageLayer: (imageObj: fabric.Image, newUrl: string) => Promise<void>
   addText: (text: string, options?: fabric.ITextOptions) => void
   deleteSelected: () => void
+  // Layer management functions
+  toggleObjectVisibility: (objectId: string) => void
+  toggleObjectLock: (objectId: string) => void
+  sendObjectBackward: () => void
+  bringObjectForward: () => void
+  groupSelectedObjects: () => void
+  ungroupSelectedObject: () => void
   // Export functions
   exportPNG: (options?: fabric.IDataURLOptions) => string
   exportJSON: () => string
@@ -470,6 +477,122 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
     }
   }, [canvas])
 
+  // Layer management functions
+  const toggleObjectVisibility = useCallback((objectId: string) => {
+    if (!canvas) return
+    
+    const object = canvas.getObjects().find(obj => obj.id === objectId)
+    if (!object) return
+    
+    // Toggle visibility
+    object.set('invisible', !object.invisible)
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
+  const toggleObjectLock = useCallback((objectId: string) => {
+    if (!canvas) return
+    
+    const object = canvas.getObjects().find(obj => obj.id === objectId)
+    if (!object) return
+    
+    // Toggle lock
+    const isLocked = !object.locked
+    object.set('locked', isLocked)
+    
+    // If locking, also remove from selection if it's selected
+    if (isLocked && object.active) {
+      canvas.discardActiveObject()
+    }
+    
+    object.selectable = !isLocked
+    object.evented = !isLocked
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
+  const sendObjectBackward = useCallback(() => {
+    if (!canvas) return
+    
+    const activeObject = canvas.getActiveObject()
+    if (!activeObject) return
+    
+    canvas.sendBackwards(activeObject)
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
+  const bringObjectForward = useCallback(() => {
+    if (!canvas) return
+    
+    const activeObject = canvas.getActiveObject()
+    if (!activeObject) return
+    
+    canvas.bringForward(activeObject)
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
+  const groupSelectedObjects = useCallback(() => {
+    if (!canvas) return
+    
+    // We need multiple selected objects to make a group
+    const activeSelection = canvas.getActiveObject() as fabric.ActiveSelection
+    if (!activeSelection || !activeSelection.type || activeSelection.type !== 'activeSelection') return
+    
+    // Create a group from the active selection
+    const group = activeSelection.toGroup() as fabric.Group
+    
+    // Set additional properties on the group
+    group.id = `group_${Date.now()}`
+    group.name = `Group ${canvas.getObjects().filter(obj => obj.type === 'group').length + 1}`
+    
+    // Update canvas
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
+  const ungroupSelectedObject = useCallback(() => {
+    if (!canvas) return
+    
+    const activeObject = canvas.getActiveObject() as fabric.Group
+    if (!activeObject || activeObject.type !== 'group') return
+    
+    // Ungroup the selected group object
+    const items = activeObject.getObjects()
+    
+    // Destroy the group
+    activeObject.destroy()
+    
+    // Get all the objects from the group
+    const ungroupedObjects = canvas._objects.filter(obj => 
+      items.indexOf(obj as fabric.Object) !== -1
+    )
+    
+    // Create a new active selection with these objects
+    const selection = new fabric.ActiveSelection(ungroupedObjects, {
+      canvas: canvas
+    })
+    
+    // Remove the group and add the selection
+    canvas.remove(activeObject)
+    canvas.setActiveObject(selection)
+    canvas.requestRenderAll()
+    
+    // Update state history
+    saveCanvasState(canvas)
+  }, [canvas, saveCanvasState])
+
   // Export functions
   const exportPNG = useCallback((options: fabric.IDataURLOptions = {}) => {
     if (!canvas) return ''
@@ -614,6 +737,13 @@ export const DesignCanvasProvider: React.FC<DesignCanvasProviderProps> = ({
     replaceImageLayer,
     addText,
     deleteSelected,
+    // Layer management functions
+    toggleObjectVisibility,
+    toggleObjectLock,
+    sendObjectBackward,
+    bringObjectForward,
+    groupSelectedObjects,
+    ungroupSelectedObject,
     // Export functions
     exportPNG,
     exportJSON,

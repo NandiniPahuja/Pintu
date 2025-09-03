@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import UploadPanel from './UploadPanel'
 import TextPanel from './TextPanel'
+import LayersPanel from './LayersPanel'
 import { useStore } from '../lib/store'
 
 interface Tool {
@@ -199,53 +200,8 @@ const Sidebar: React.FC = () => {
 
       {/* Layers Section */}
       {activeTool === 'layers' && (
-        <div className="flex-1 p-4">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium text-secondary-900">Layers</h4>
-              <button className="p-1 text-secondary-500 hover:text-secondary-700">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-              </button>
-            </div>
-            
-            <div className="space-y-1">
-              {[
-                { name: 'Background', type: 'Rectangle', visible: true },
-                { name: 'Header Text', type: 'Text', visible: true },
-                { name: 'Logo', type: 'Image', visible: false },
-                { name: 'Button', type: 'Rectangle', visible: true }
-              ].map((layer, index) => (
-                <div
-                  key={index}
-                  className="flex items-center space-x-2 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer group"
-                >
-                  <button className="text-secondary-400 hover:text-secondary-600">
-                    {layer.visible ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
-                      </svg>
-                    )}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-secondary-900 truncate">{layer.name}</p>
-                    <p className="text-xs text-secondary-500">{layer.type}</p>
-                  </div>
-                  <button className="opacity-0 group-hover:opacity-100 text-secondary-400 hover:text-secondary-600">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="flex-1 overflow-hidden">
+          <LayersPanel />
         </div>
       )}
     </div>
